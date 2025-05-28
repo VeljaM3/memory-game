@@ -1,0 +1,202 @@
+<html>
+<head>
+    <style>
+        body {
+            background-color: #292929;
+        }
+    </style>
+</head>
+<body>
+    <audio id="cardSound" src="sound.wav" preload="auto"></audio>
+
+    <script>
+        let windowW = 500;
+        let windowH = 500;
+        let fps = 30;
+        let selectedCards = []; // To keep track of selected cards
+        let waitingForMatch = false; // To check if we are waiting for cards to be flipped
+        let startTime = null; // Game start time
+        let timeLimit = 60000; // 60 seconds
+        let gameStarted = false; // To check if the game has started
+
+        function Entitiy(){
+            Entitiy.prototype._count++;
+            this.id = Entitiy.prototype._count;
+            this.components = {};
+            this.addComponent = function addComponent(component){
+                this.components[component.name] = component;
+                return this;
+            }
+            this.removeComponent = function removeComponent(component){
+                delete this.components[component.name];
+                return this;
+            }
+        }
+
+        function Component(name, value){
+            this.name = name;
+            this.value = value;
+        }
+
+        (function init(){
+            Entitiy.prototype._count = 0;
+        }())
+
+        let entities = [];
+
+        // Create cards with random pairs
+        let values = [1, 2, 3, 4, 5, 6, 7, 8]; // Symbols/images to be paired
+        values = values.concat(values); // Duplicate for pairs
+        values = values.sort(() => Math.random() - 0.5); // Shuffle cards
+
+        let cardSize = 100;
+        for (let i = 0; i < 16; i++) {
+            let x = (i % 4) * (cardSize + 10) + 50;
+            let y = Math.floor(i / 4) * (cardSize + 10) + 50;
+
+            entities.push(new Entitiy()
+                .addComponent(new Component('x', x))
+                .addComponent(new Component('y', y))
+                .addComponent(new Component('value', values[i])) // Each card has its own value
+                .addComponent(new Component('flipped', false)) // Cards are initially face down
+                .addComponent(new Component('matched', false)) // Whether the card is already matched
+            );
+        }
+
+        let systems = [];
+
+        // User input system - detecting mouse clicks
+        let userInputSystem = (function inputSystem() {
+            let clickX = null;
+            let clickY = null;
+
+            function handleMouseClick(event) {
+                clickX = event.clientX;
+                clickY = event.clientY;
+            }
+
+            window.addEventListener('click', handleMouseClick);
+
+            return (entities) => {
+                if (clickX === null || clickY === null || waitingForMatch) return entities;
+
+                for (let e of entities) {
+                    if (e.components.flipped.value === false && 
+                        clickX > e.components.x.value && clickX < e.components.x.value + cardSize &&
+                        clickY > e.components.y.value && clickY < e.components.y.value + cardSize) {
+
+                        if (!gameStarted) {
+                            startTime = Date.now(); // Start the timer when the player clicks the first card
+                            gameStarted = true;
+                        }
+
+                        // Play sound
+                        let cardSound = document.getElementById('cardSound');
+                        cardSound.play();
+
+                        e.components.flipped.value = true; // Flip the card
+                        selectedCards.push(e); // Add to selected cards
+
+                        if (selectedCards.length === 2) {
+                            waitingForMatch = true; // Activate waiting
+
+                            if (selectedCards[0].components.value.value !== selectedCards[1].components.value.value) {
+                                setTimeout(() => {
+                                    selectedCards[0].components.flipped.value = false;
+                                    selectedCards[1].components.flipped.value = false;
+                                    selectedCards = [];
+                                    waitingForMatch = false; // Release waiting
+                                }, 500); // Flip back cards after half a second if they don't match
+                            } else {
+                                selectedCards[0].components.matched.value = true;
+                                selectedCards[1].components.matched.value = true;
+                                selectedCards = [];
+                                waitingForMatch = false; // Release waiting
+                            }
+                        }
+                    }
+                }
+
+                clickX = null;
+                clickY = null;
+                return entities;
+            }
+        })();
+
+        systems.push(userInputSystem);
+
+        // Render system - displaying cards
+        let renderingSystem = (function graphicsSystem() {
+            document.body.innerHTML += '<canvas id="window" width=' + windowW + ' height=' + windowH + ' ></canvas>';
+            let window = document.getElementById('window');
+            let ctx = window.getContext('2d');
+
+            let cardBackImage = new Image();
+            cardBackImage.src = 'card-backwards.png';
+
+            return (entities) => {
+                ctx.clearRect(0, 0, windowW, windowH);
+
+                let remainingTime = 0;
+                if (gameStarted) {
+                    let currentTime = Date.now();
+                    let elapsedTime = currentTime - startTime;
+                    remainingTime = Math.max(0, Math.ceil((timeLimit - elapsedTime) / 1000));
+
+                    if (remainingTime === 0) {
+                        alert("Game Over! \n Your score is: " + calculateScore(entities));
+                        return entities;
+                    }
+                }
+
+                ctx.fillStyle = "#FFF";
+                ctx.font = "20px Arial";
+                ctx.fillText(`Time Left: ${remainingTime}s`, 10, 20);
+                ctx.fillText(`Score: ${calculateScore(entities)}`, 10, 40);
+
+                for (let e of entities) {
+                    if (e.components.flipped.value || e.components.matched.value) {
+                        ctx.fillStyle = "#FFF";
+                        ctx.fillRect(e.components.x.value, e.components.y.value, cardSize, cardSize);
+                        ctx.fillStyle = "#000";
+                        ctx.font = "30px Arial";
+                        ctx.fillText(e.components.value.value, e.components.x.value + cardSize / 2 - 10, e.components.y.value + cardSize / 2 + 10);
+                    } else {
+                        ctx.drawImage(cardBackImage, e.components.x.value, e.components.y.value, cardSize, cardSize);
+                    }
+                }
+                return entities;
+            }
+        })();
+
+        systems.push(userInputSystem);
+        systems.push(renderingSystem);
+
+        function calculateScore(entities) {
+            return entities
+                .filter(entity => entity.components.matched.value) // Filter only matched cards
+                .map(entity => 2) // Map each matched card to a value of 2
+                .reduce((score, value) => score + value, 0); // Sum the values
+        }
+
+        function game(entities, systems) {
+            // Check if all cards are matched
+            let allMatched = entities.every(e => e.components.matched.value === true);
+            if (allMatched) {
+                alert("Congratulations! You've matched all pairs! Your score is: " + calculateScore(entities));
+                return; // End the game
+            }
+
+            // Execute all game systems
+            for (let s of systems) {
+                entities = s(Object.freeze(entities));
+            }
+        }
+
+        setInterval(() => {
+            game(entities, systems);
+        }, 1000 / fps);
+
+    </script> 
+</body>
+</html>
