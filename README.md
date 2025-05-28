@@ -1,2 +1,3 @@
 # memory-game
-A memory card game built with HTML and JavaScript
+
+A simple memory card game built with HTML and JavaScript.
